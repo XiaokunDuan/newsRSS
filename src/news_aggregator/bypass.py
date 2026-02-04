@@ -1,6 +1,16 @@
-"""付费墙绕过模块"""
+"""付费墙绕过模块
+
+基于 Bypass Paywalls Clean 扩展的技术，支持多种绕过方法：
+1. 真实浏览器 Headers（最有效）
+2. JSON-LD 结构化数据提取（SEO 数据）
+3. Googlebot User-Agent 伪装
+4. 搜索引擎 Referer（Google/Facebook/Twitter）
+5. Archive 服务（archive.today/archive.org）
+6. Playwright 浏览器 + BPC 扩展（备用方案，用于顽固付费墙）
+"""
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -22,269 +32,531 @@ class BypassResult:
     error: Optional[str] = None
 
 
-# 搜索引擎伪装 Headers
-GOOGLEBOT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-    "Referer": "https://www.google.com/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Accept-Encoding": "gzip, deflate",
-    "Connection": "keep-alive",
-}
+# =============================================================================
+# Headers 配置
+# =============================================================================
 
-BINGBOT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
-    "Referer": "https://www.bing.com/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-}
-
-# 常规浏览器 Headers (配合 Google Referer)
-BROWSER_FROM_GOOGLE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Referer": "https://www.google.com/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+# 真实 Chrome 浏览器 Headers（最有效）
+CHROME_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Sec-Ch-Ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1",
 }
 
+# 从 Google 搜索来的浏览器
+CHROME_FROM_GOOGLE = {
+    **CHROME_HEADERS,
+    "Referer": "https://www.google.com/",
+    "Sec-Fetch-Site": "cross-site",
+}
+
+# 从 Facebook 来的浏览器（部分网站对社交媒体流量更宽松）
+CHROME_FROM_FACEBOOK = {
+    **CHROME_HEADERS,
+    "Referer": "https://www.facebook.com/",
+    "Sec-Fetch-Site": "cross-site",
+}
+
+# 从 Twitter 来的浏览器
+CHROME_FROM_TWITTER = {
+    **CHROME_HEADERS,
+    "Referer": "https://t.co/",
+    "Sec-Fetch-Site": "cross-site",
+}
+
+# Googlebot（基于 BPC 扩展配置）
+GOOGLEBOT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+# Googlebot Mobile
+GOOGLEBOT_MOBILE_HEADERS = {
+    "User-Agent": "Chrome/121.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+# Bingbot
+BINGBOT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+# Facebook Bot（用于预览）
+FACEBOOKBOT_HEADERS = {
+    "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+
+
+# =============================================================================
+# 站点规则配置（基于 BPC 扩展）
+# =============================================================================
 
 @dataclass
 class SiteRule:
     """站点特定规则"""
+    # 主要方法: chrome, googlebot, bingbot, facebookbot
+    method: str = "chrome"
+    # 备用方法列表
+    fallbacks: tuple = ()
+    # 是否优先尝试 JSON-LD 提取
+    try_json_ld: bool = True
+    # 最小内容长度（用于验证）
+    min_content_length: int = 500
 
-    method: str  # googlebot, bingbot, browser_google, archive, amp
-    clear_cookies: bool = True
-    use_amp: bool = False
-    fallback: Optional[str] = None  # 备用方法
 
-
-# 站点特定规则
+# 站点规则（基于 BPC 扩展的实际配置）
 SITE_RULES: dict[str, SiteRule] = {
-    # 美国媒体
-    "nytimes.com": SiteRule(method="googlebot", fallback="archive"),
-    "wsj.com": SiteRule(method="archive", fallback="google_cache"),
-    "washingtonpost.com": SiteRule(method="browser_google", use_amp=True),
-    "bloomberg.com": SiteRule(method="archive", fallback="google_cache"),
-    "theatlantic.com": SiteRule(method="googlebot"),
-    "foreignpolicy.com": SiteRule(method="googlebot"),
-    "foreignaffairs.com": SiteRule(method="archive"),
-    # 英国媒体
-    "economist.com": SiteRule(method="googlebot", fallback="archive"),
-    "ft.com": SiteRule(method="archive", fallback="google_cache"),
-    "telegraph.co.uk": SiteRule(method="googlebot"),
-    # 亚太媒体
-    "scmp.com": SiteRule(method="googlebot"),
-    "asia.nikkei.com": SiteRule(method="googlebot"),
-    "theinitium.com": SiteRule(method="archive"),
-    # 科技媒体
-    "wired.com": SiteRule(method="googlebot"),
-    "technologyreview.com": SiteRule(method="googlebot"),
+    # === 美国媒体 ===
+    "nytimes.com": SiteRule(
+        method="chrome",
+        fallbacks=("googlebot", "archive"),
+        try_json_ld=True,
+    ),
+    "washingtonpost.com": SiteRule(
+        method="googlebot",  # BPC 使用 googlebot
+        fallbacks=("chrome_google", "archive"),
+        try_json_ld=True,
+    ),
+    "wsj.com": SiteRule(
+        method="chrome",
+        fallbacks=("googlebot", "archive"),
+        try_json_ld=True,
+        min_content_length=300,  # WSJ 返回的内容较短
+    ),
+    "bloomberg.com": SiteRule(
+        method="chrome",  # BPC 不用 googlebot，靠阻止 JS
+        fallbacks=("chrome_facebook", "archive"),
+        try_json_ld=True,
+        min_content_length=300,
+    ),
+    "theatlantic.com": SiteRule(
+        method="chrome",
+        fallbacks=("chrome_google",),  # Googlebot 返回 403
+        try_json_ld=True,
+        min_content_length=500,
+    ),
+    "foreignaffairs.com": SiteRule(
+        method="chrome",
+        fallbacks=("archive",),
+        try_json_ld=True,
+    ),
+
+    # === 英国媒体 ===
+    "ft.com": SiteRule(
+        method="chrome",
+        fallbacks=("archive",),
+        try_json_ld=True,
+    ),
+
+    # === 亚太媒体 ===
+    "scmp.com": SiteRule(
+        method="chrome",  # SCMP 有 JSON-LD
+        fallbacks=("googlebot",),
+        try_json_ld=True,
+    ),
+    "asia.nikkei.com": SiteRule(
+        method="googlebot",
+        fallbacks=("chrome",),
+        try_json_ld=True,
+    ),
+    "theinitium.com": SiteRule(
+        method="chrome",
+        fallbacks=("archive",),
+        try_json_ld=True,
+    ),
+
+    # === 科技媒体 ===
+    "wired.com": SiteRule(
+        method="chrome",  # Wired 有 JSON-LD
+        fallbacks=("googlebot",),
+        try_json_ld=True,
+    ),
+    "technologyreview.com": SiteRule(
+        method="chrome",
+        fallbacks=("googlebot",),
+        try_json_ld=True,
+    ),
 }
 
 
-class PaywallBypass:
-    """付费墙绕过类"""
+# =============================================================================
+# 内容提取器
+# =============================================================================
 
-    def __init__(self, proxy: Optional[str] = None, timeout: int = 30):
-        self.proxy = proxy
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
+class ContentExtractor:
+    """内容提取器"""
 
-    def _get_domain(self, url: str) -> str:
-        """提取域名"""
-        parsed = urlparse(url)
-        domain = parsed.netloc
-        # 移除 www. 前缀
-        if domain.startswith("www."):
-            domain = domain[4:]
-        return domain
+    # 付费墙检测关键词（必须是明确的付费墙提示）
+    PAYWALL_INDICATORS = [
+        "subscribe now to continue",
+        "subscription required",
+        "sign in to read the full",
+        "create a free account to continue",
+        "already a subscriber? sign in",
+        "to continue reading, please",
+        "unlock this article",
+        "this article is for members only",
+        "premium content - subscribe",
+        "you've reached your limit",
+        "free articles remaining",
+        "register to continue reading",
+    ]
 
-    def _get_site_rule(self, url: str) -> Optional[SiteRule]:
-        """获取站点规则"""
-        domain = self._get_domain(url)
-        # 精确匹配
-        if domain in SITE_RULES:
-            return SITE_RULES[domain]
-        # 子域名匹配
-        for rule_domain, rule in SITE_RULES.items():
-            if domain.endswith("." + rule_domain) or domain == rule_domain:
-                return rule
+    @staticmethod
+    def extract_json_ld(html: str) -> Optional[tuple[str, str]]:
+        """从 JSON-LD 结构化数据中提取文章内容
+
+        很多网站为 SEO 目的在页面中嵌入完整文章内容
+        """
+        soup = BeautifulSoup(html, "lxml")
+        scripts = soup.find_all("script", type="application/ld+json")
+
+        for script in scripts:
+            if not script.string:
+                continue
+            try:
+                data = json.loads(script.string)
+
+                # 处理数组形式
+                items = [data] if isinstance(data, dict) else data
+
+                # 处理 @graph 数组
+                if isinstance(data, dict) and "@graph" in data:
+                    items = data["@graph"]
+
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+
+                    # 提取 articleBody 或 text
+                    body = item.get("articleBody") or item.get("text")
+                    headline = item.get("headline", "")
+
+                    if body and len(body) > 300:
+                        # 清理内容
+                        body = re.sub(r"\s+", " ", body).strip()
+                        return headline, body
+
+            except (json.JSONDecodeError, TypeError):
+                continue
+
         return None
 
-    def _get_headers(self, method: str) -> dict:
-        """根据方法获取 Headers"""
-        if method == "googlebot":
-            return GOOGLEBOT_HEADERS.copy()
-        elif method == "bingbot":
-            return BINGBOT_HEADERS.copy()
-        elif method == "browser_google":
-            return BROWSER_FROM_GOOGLE_HEADERS.copy()
-        return BROWSER_FROM_GOOGLE_HEADERS.copy()
+    @staticmethod
+    def extract_next_data(html: str) -> Optional[tuple[str, str]]:
+        """从 Next.js __NEXT_DATA__ 中提取内容"""
+        soup = BeautifulSoup(html, "lxml")
+        script = soup.find("script", id="__NEXT_DATA__")
 
-    def _get_amp_url(self, url: str) -> str:
-        """获取 AMP 版本 URL"""
-        parsed = urlparse(url)
-        # 尝试添加 /amp/ 路径
-        if "/amp/" not in parsed.path and not parsed.path.endswith("/amp"):
-            path = parsed.path.rstrip("/") + "/amp/"
-            return f"{parsed.scheme}://{parsed.netloc}{path}"
-        return url
+        if not script or not script.string:
+            return None
 
-    async def _fetch_with_headers(
-        self, url: str, headers: dict
-    ) -> Optional[tuple[str, str]]:
-        """使用指定 headers 获取页面"""
-        connector = aiohttp.TCPConnector(ssl=False)
         try:
-            async with aiohttp.ClientSession(
-                connector=connector,
-                timeout=self.timeout,
-                cookie_jar=aiohttp.DummyCookieJar(),  # 不保存 cookies
-            ) as session:
-                async with session.get(
-                    url, headers=headers, proxy=self.proxy, allow_redirects=True
-                ) as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        return self._extract_content(html)
-        except Exception:
-            pass
-        return None
+            data = json.loads(script.string)
 
-    def _extract_content(self, html: str) -> Optional[tuple[str, str]]:
-        """从 HTML 提取正文内容"""
+            # 递归搜索 articleBody 或 content
+            def find_content(obj, depth=0):
+                if depth > 10:
+                    return None
+                if isinstance(obj, dict):
+                    for key in ["articleBody", "content", "body", "text"]:
+                        if key in obj and isinstance(obj[key], str) and len(obj[key]) > 300:
+                            title = obj.get("headline", obj.get("title", ""))
+                            return title, obj[key]
+                    for value in obj.values():
+                        result = find_content(value, depth + 1)
+                        if result:
+                            return result
+                elif isinstance(obj, list):
+                    for item in obj:
+                        result = find_content(item, depth + 1)
+                        if result:
+                            return result
+                return None
+
+            return find_content(data)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    @staticmethod
+    def extract_readability(html: str) -> Optional[tuple[str, str]]:
+        """使用 Readability 提取内容"""
         try:
             doc = Document(html)
             title = doc.title()
             content = doc.summary()
-            # 清理 HTML 标签，保留文本
+
             soup = BeautifulSoup(content, "lxml")
             text = soup.get_text(separator="\n", strip=True)
-            # 清理多余空行
             text = re.sub(r"\n{3,}", "\n\n", text)
-            if len(text) > 200:  # 确保有足够内容
+
+            if len(text) > 300:
                 return title, text
         except Exception:
             pass
         return None
 
-    async def _try_archive_today(self, url: str) -> Optional[tuple[str, str]]:
+    @classmethod
+    def is_paywall_content(cls, text: str) -> bool:
+        """检测内容是否是付费墙页面
+
+        如果内容较长（>2000字符），即使有一些付费墙关键词也可能是真实内容
+        """
+        if not text:
+            return True
+
+        text_lower = text.lower()
+        # 统计付费墙指标出现次数
+        count = sum(1 for ind in cls.PAYWALL_INDICATORS if ind in text_lower)
+
+        # 内容长度阈值：长内容更可能是真实文章
+        if len(text) > 2000:
+            # 长内容需要更多指标才判定为付费墙
+            return count >= 3
+        elif len(text) > 1000:
+            return count >= 2
+        else:
+            # 短内容更可能是付费墙提示页
+            return count >= 1
+
+    @classmethod
+    def extract(cls, html: str, try_json_ld: bool = True) -> Optional[tuple[str, str]]:
+        """提取内容，返回 (title, content)"""
+
+        # 方法1: JSON-LD（最可靠，因为是结构化数据）
+        if try_json_ld:
+            result = cls.extract_json_ld(html)
+            if result and not cls.is_paywall_content(result[1]):
+                return result
+
+        # 方法2: Next.js 数据
+        result = cls.extract_next_data(html)
+        if result and not cls.is_paywall_content(result[1]):
+            return result
+
+        # 方法3: Readability
+        result = cls.extract_readability(html)
+        if result and not cls.is_paywall_content(result[1]):
+            return result
+
+        return None
+
+
+# =============================================================================
+# 主类
+# =============================================================================
+
+class PaywallBypass:
+    """付费墙绕过类"""
+
+    def __init__(
+        self,
+        proxy: Optional[str] = None,
+        timeout: int = 30,
+        bpc_extension_path: Optional[str] = None,
+        use_browser_fallback: bool = True,
+    ):
+        """
+        Args:
+            proxy: HTTP 代理
+            timeout: 请求超时（秒）
+            bpc_extension_path: BPC 扩展路径（用于浏览器备用方案）
+            use_browser_fallback: 是否启用浏览器备用方案
+        """
+        self.proxy = proxy
+        self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.extractor = ContentExtractor()
+        self.bpc_extension_path = bpc_extension_path
+        self.use_browser_fallback = use_browser_fallback
+        self._browser_bypass = None
+
+    def _get_domain(self, url: str) -> str:
+        """提取域名"""
+        parsed = urlparse(url)
+        domain = parsed.netloc
+        if domain.startswith("www."):
+            domain = domain[4:]
+        return domain
+
+    def _get_site_rule(self, url: str) -> SiteRule:
+        """获取站点规则"""
+        domain = self._get_domain(url)
+
+        # 精确匹配
+        if domain in SITE_RULES:
+            return SITE_RULES[domain]
+
+        # 子域名匹配
+        for rule_domain, rule in SITE_RULES.items():
+            if domain.endswith("." + rule_domain):
+                return rule
+
+        # 默认规则
+        return SiteRule(method="chrome", fallbacks=("chrome_google",))
+
+    def _get_headers(self, method: str) -> dict:
+        """根据方法获取 Headers"""
+        headers_map = {
+            "chrome": CHROME_HEADERS,
+            "chrome_google": CHROME_FROM_GOOGLE,
+            "chrome_facebook": CHROME_FROM_FACEBOOK,
+            "chrome_twitter": CHROME_FROM_TWITTER,
+            "googlebot": GOOGLEBOT_HEADERS,
+            "googlebot_mobile": GOOGLEBOT_MOBILE_HEADERS,
+            "bingbot": BINGBOT_HEADERS,
+            "facebookbot": FACEBOOKBOT_HEADERS,
+        }
+        return headers_map.get(method, CHROME_HEADERS).copy()
+
+    async def _fetch(self, url: str, headers: dict) -> Optional[str]:
+        """获取页面 HTML"""
+        try:
+            connector = aiohttp.TCPConnector(ssl=False, force_close=True)
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=self.timeout,
+                cookie_jar=aiohttp.DummyCookieJar(),
+            ) as session:
+                async with session.get(
+                    url, headers=headers, proxy=self.proxy, allow_redirects=True
+                ) as response:
+                    if response.status == 200:
+                        return await response.text()
+        except Exception:
+            pass
+        return None
+
+    async def _try_archive_today(self, url: str) -> Optional[str]:
         """尝试从 archive.today 获取"""
         archive_url = f"https://archive.today/newest/{quote(url, safe='')}"
-        headers = BROWSER_FROM_GOOGLE_HEADERS.copy()
-        try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(
-                connector=connector, timeout=self.timeout
-            ) as session:
-                async with session.get(
-                    archive_url,
-                    headers=headers,
-                    proxy=self.proxy,
-                    allow_redirects=True,
-                ) as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        return self._extract_content(html)
-        except Exception:
-            pass
+        html = await self._fetch(archive_url, CHROME_HEADERS)
+
+        # 验证不是 nginx 默认页面
+        if html and "Welcome to nginx" not in html:
+            return html
         return None
 
-    async def _try_archive_org(self, url: str) -> Optional[tuple[str, str]]:
+    async def _try_archive_org(self, url: str) -> Optional[str]:
         """尝试从 archive.org 获取"""
-        archive_url = f"https://web.archive.org/web/{quote(url, safe='')}"
-        headers = BROWSER_FROM_GOOGLE_HEADERS.copy()
-        try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(
-                connector=connector, timeout=self.timeout
-            ) as session:
-                async with session.get(
-                    archive_url,
-                    headers=headers,
-                    proxy=self.proxy,
-                    allow_redirects=True,
-                ) as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        return self._extract_content(html)
-        except Exception:
-            pass
-        return None
-
-    async def _try_google_cache(self, url: str) -> Optional[tuple[str, str]]:
-        """尝试从 Google Cache 获取"""
-        cache_url = (
-            f"https://webcache.googleusercontent.com/search?q=cache:{quote(url, safe='')}"
-        )
-        headers = BROWSER_FROM_GOOGLE_HEADERS.copy()
-        try:
-            connector = aiohttp.TCPConnector(ssl=False)
-            async with aiohttp.ClientSession(
-                connector=connector, timeout=self.timeout
-            ) as session:
-                async with session.get(
-                    cache_url, headers=headers, proxy=self.proxy, allow_redirects=True
-                ) as response:
-                    if response.status == 200:
-                        html = await response.text()
-                        return self._extract_content(html)
-        except Exception:
-            pass
-        return None
+        archive_url = f"https://web.archive.org/web/2/{url}"
+        return await self._fetch(archive_url, CHROME_HEADERS)
 
     async def get_full_article(self, url: str) -> BypassResult:
         """获取完整文章内容"""
         rule = self._get_site_rule(url)
 
-        # 如果没有特定规则，使用默认方法
-        if not rule:
-            rule = SiteRule(method="browser_google")
+        # 构建方法列表
+        methods = [rule.method] + list(rule.fallbacks)
 
-        methods_to_try = []
+        for method in methods:
+            # Archive 服务特殊处理
+            if method == "archive":
+                # 尝试 archive.today
+                html = await self._try_archive_today(url)
+                if html:
+                    result = self.extractor.extract(html, rule.try_json_ld)
+                    if result and len(result[1]) >= rule.min_content_length:
+                        return BypassResult(
+                            success=True,
+                            title=result[0],
+                            content=result[1],
+                            method="archive.today"
+                        )
 
-        # 如果使用 AMP，先尝试 AMP 版本
-        if rule.use_amp:
-            methods_to_try.append(("amp", self._get_amp_url(url)))
+                # 尝试 archive.org
+                html = await self._try_archive_org(url)
+                if html:
+                    result = self.extractor.extract(html, rule.try_json_ld)
+                    if result and len(result[1]) >= rule.min_content_length:
+                        return BypassResult(
+                            success=True,
+                            title=result[0],
+                            content=result[1],
+                            method="archive.org"
+                        )
+                continue
 
-        # 主要方法
-        if rule.method == "archive":
-            methods_to_try.append(("archive_today", url))
-            methods_to_try.append(("archive_org", url))
-        else:
-            methods_to_try.append((rule.method, url))
+            # 常规方法
+            headers = self._get_headers(method)
+            html = await self._fetch(url, headers)
 
-        # 备用方法
-        if rule.fallback:
-            if rule.fallback == "archive":
-                methods_to_try.append(("archive_today", url))
-                methods_to_try.append(("archive_org", url))
-            elif rule.fallback == "google_cache":
-                methods_to_try.append(("google_cache", url))
+            if not html:
+                continue
 
-        # 依次尝试各种方法
-        for method, target_url in methods_to_try:
-            result = None
-
-            if method in ("googlebot", "bingbot", "browser_google", "amp"):
-                headers = self._get_headers(method)
-                result = await self._fetch_with_headers(target_url, headers)
-            elif method == "archive_today":
-                result = await self._try_archive_today(target_url)
-            elif method == "archive_org":
-                result = await self._try_archive_org(target_url)
-            elif method == "google_cache":
-                result = await self._try_google_cache(target_url)
+            # 提取内容
+            result = self.extractor.extract(html, rule.try_json_ld)
 
             if result:
                 title, content = result
-                return BypassResult(
-                    success=True, content=content, title=title, method=method
-                )
+                if len(content) >= rule.min_content_length:
+                    return BypassResult(
+                        success=True,
+                        title=title,
+                        content=content,
+                        method=method
+                    )
+
+        # 如果常规方法失败，尝试浏览器备用方案
+        if self.use_browser_fallback and self._needs_browser_fallback(url):
+            browser_result = await self._try_browser_bypass(url)
+            if browser_result and browser_result.success:
+                return browser_result
 
         return BypassResult(success=False, error="所有绕过方法均失败")
+
+    def _needs_browser_fallback(self, url: str) -> bool:
+        """检查是否需要浏览器备用方案"""
+        browser_sites = ["bloomberg.com", "ft.com", "washingtonpost.com", "economist.com"]
+        return any(site in url for site in browser_sites)
+
+    async def _try_browser_bypass(self, url: str) -> Optional[BypassResult]:
+        """尝试使用浏览器绕过"""
+        try:
+            from .bypass_browser import BrowserBypass
+
+            if self._browser_bypass is None:
+                self._browser_bypass = BrowserBypass(
+                    extension_path=self.bpc_extension_path,
+                    timeout=30000,
+                )
+
+            result = await self._browser_bypass.get_article(url)
+
+            if result.success:
+                return BypassResult(
+                    success=True,
+                    title=result.title,
+                    content=result.content,
+                    method="browser+bpc"
+                )
+        except ImportError:
+            pass  # Playwright 未安装
+        except Exception:
+            pass
+
+        return None
+
+    async def close(self):
+        """关闭资源"""
+        if self._browser_bypass:
+            await self._browser_bypass.close()
+            self._browser_bypass = None
 
     async def batch_get_articles(
         self, urls: list[str], max_concurrent: int = 5

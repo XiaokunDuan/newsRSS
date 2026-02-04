@@ -51,30 +51,10 @@ US_SOURCES = [
         description="CNN 国际版",
     ),
     NewsSource(
-        name="CNN 政治",
-        url="https://rss.cnn.com/rss/cnn_allpolitics.rss",
-        region=Region.US,
-        category=Category.POLITICS,
-    ),
-    NewsSource(
         name="NYTimes 世界",
         url="https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
         region=Region.US,
         category=Category.POLITICS,
-        has_paywall=True,
-    ),
-    NewsSource(
-        name="NYTimes 政治",
-        url="https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml",
-        region=Region.US,
-        category=Category.POLITICS,
-        has_paywall=True,
-    ),
-    NewsSource(
-        name="NYTimes 科技",
-        url="https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
-        region=Region.US,
-        category=Category.TECHNOLOGY,
         has_paywall=True,
     ),
     NewsSource(
@@ -123,20 +103,6 @@ US_SOURCES = [
         category=Category.OPINION,
         has_paywall=True,
     ),
-    NewsSource(
-        name="Foreign Policy",
-        url="https://foreignpolicy.com/feed/",
-        region=Region.US,
-        category=Category.POLITICS,
-        has_paywall=True,
-    ),
-    NewsSource(
-        name="Foreign Affairs",
-        url="https://www.foreignaffairs.com/rss.xml",
-        region=Region.US,
-        category=Category.POLITICS,
-        has_paywall=True,
-    ),
 ]
 
 # 英国媒体
@@ -148,37 +114,10 @@ UK_SOURCES = [
         category=Category.OTHER,
     ),
     NewsSource(
-        name="BBC Asia",
-        url="https://feeds.bbci.co.uk/news/world/asia/rss.xml",
-        region=Region.UK,
-        category=Category.CHINA,
-    ),
-    NewsSource(
-        name="BBC 中文",
-        url="https://www.bbc.com/zhongwen/simp/rss.xml",
-        region=Region.UK,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-    ),
-    NewsSource(
         name="The Guardian World",
         url="https://www.theguardian.com/world/rss",
         region=Region.UK,
         category=Category.OTHER,
-    ),
-    NewsSource(
-        name="The Guardian China",
-        url="https://www.theguardian.com/world/china/rss",
-        region=Region.UK,
-        category=Category.CHINA,
-    ),
-    NewsSource(
-        name="The Economist",
-        url="https://www.economist.com/rss",
-        region=Region.UK,
-        category=Category.ECONOMY,
-        has_paywall=True,
     ),
     NewsSource(
         name="Financial Times",
@@ -187,25 +126,10 @@ UK_SOURCES = [
         category=Category.ECONOMY,
         has_paywall=True,
     ),
-    NewsSource(
-        name="The Telegraph",
-        url="https://www.telegraph.co.uk/rss.xml",
-        region=Region.UK,
-        category=Category.OTHER,
-        has_paywall=True,
-    ),
 ]
 
 # 欧洲媒体
 EU_SOURCES = [
-    NewsSource(
-        name="德国之声 中文",
-        url="https://rss.dw.com/rdf/rss-chi-all",
-        region=Region.EU,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-    ),
     NewsSource(
         name="德国之声 英文",
         url="https://rss.dw.com/rdf/rss-en-all",
@@ -307,33 +231,6 @@ CHINA_SOURCES = [
         category=Category.CHINA,
         language="zh",
         requires_proxy=True,
-    ),
-    NewsSource(
-        name="端传媒",
-        url="https://theinitium.com/newsfeed/",
-        region=Region.CHINA,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-        has_paywall=True,
-    ),
-    NewsSource(
-        name="纽约时报中文网",
-        url="https://cn.nytimes.com/rss/",
-        region=Region.CHINA,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-        has_paywall=True,
-    ),
-    NewsSource(
-        name="FT中文网",
-        url="https://www.ftchinese.com/rss/feed",
-        region=Region.CHINA,
-        category=Category.ECONOMY,
-        language="zh",
-        requires_proxy=True,
-        has_paywall=True,
     ),
 ]
 

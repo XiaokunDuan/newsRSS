@@ -4,6 +4,7 @@ from .config import Config
 from .sources import NEWS_SOURCES, NewsSource
 from .fetcher import NewsFetcher, NewsItem
 from .bypass import PaywallBypass
+from .bypass_browser import BrowserBypass
 from .analyzer import NewsAnalyzer
 from .summarizer import NewsSummarizer
 from .scheduler import NewsScheduler

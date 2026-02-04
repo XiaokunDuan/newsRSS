@@ -7,3 +7,7 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0
 readability-lxml>=0.8.0
 fake-useragent>=1.4.0
+
+# 可选：用于绕过顽固付费墙（Bloomberg, FT, Washington Post）
+# 安装后需运行: playwright install chromium
+playwright>=1.40.0
