@@ -4,6 +4,7 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -12,6 +13,7 @@ from .config import Config
 from .fetcher import NewsFetcher
 from .analyzer import NewsAnalyzer
 from .summarizer import NewsSummarizer, QuickSummarizer
+from .daily_report import DailyReportGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -104,12 +106,19 @@ class NewsScheduler:
 
         minute, hour, day, month, day_of_week = parts
 
+        # 获取时区
+        try:
+            tz = ZoneInfo(self.config.timezone)
+        except Exception:
+            tz = ZoneInfo("Asia/Shanghai")
+
         trigger = CronTrigger(
             minute=minute,
             hour=hour,
             day=day,
             month=month,
             day_of_week=day_of_week,
+            timezone=tz,
         )
 
         self.scheduler.add_job(
@@ -121,7 +130,7 @@ class NewsScheduler:
         )
 
         self.scheduler.start()
-        logger.info(f"定时任务已启动，cron 表达式: {cron_expression}")
+        logger.info(f"定时任务已启动，cron: {cron_expression}，时区: {self.config.timezone}")
 
     def stop(self):
         """停止定时任务"""
@@ -141,3 +150,14 @@ async def run_aggregation(config: Config, use_llm: bool = True) -> str:
     """独立运行一次聚合任务"""
     scheduler = NewsScheduler(config)
     return await scheduler.run_once(use_llm=use_llm)
+
+
+async def run_daily_report(config: Config) -> bool:
+    """运行每日报告（含邮件发送）"""
+    generator = DailyReportGenerator(config)
+    return await generator.run(
+        send_email=True,
+        email_sender=config.email_sender,
+        email_password=config.email_password,
+        email_recipient=config.email_recipient,
+    )

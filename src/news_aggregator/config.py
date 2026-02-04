@@ -24,14 +24,33 @@ class Config:
 
     # 定时任务配置
     schedule_cron: str = "0 8 * * *"
+    timezone: str = "Asia/Shanghai"
 
     # 输出配置
     output_dir: Path = field(default_factory=lambda: Path("./output"))
 
-    # 获取设置
+    # 邮件配置
+    email_sender: Optional[str] = None
+    email_password: Optional[str] = None
+    email_recipient: Optional[str] = None
+
+    # Telegram 配置
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+
+    # BPC 扩展路径
+    bpc_extension_path: Optional[str] = None
+
+    # 抓取设置
     fetch_timeout: int = 30
     fetch_max_concurrent: int = 10
     fetch_retry_times: int = 3
+
+    # 逐篇分析配置
+    per_article_max_concurrent: int = 5
+    per_article_max_retries: int = 2
+    per_article_keep_days: int = 7
+    per_article_enable_auto_clean: bool = True
 
     @classmethod
     def from_env(cls, env_file: Optional[str] = None) -> "Config":
@@ -44,6 +63,24 @@ class Config:
         http_proxy = os.getenv("HTTP_PROXY", "").strip() or None
         https_proxy = os.getenv("HTTPS_PROXY", "").strip() or None
 
+        # 邮件配置
+        email_sender = os.getenv("EMAIL_SENDER", "").strip() or None
+        email_password = os.getenv("EMAIL_PASSWORD", "").strip() or None
+        email_recipient = os.getenv("EMAIL_RECIPIENT", "").strip() or None
+
+        # Telegram 配置
+        telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
+        telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip() or None
+
+        # BPC 扩展路径
+        bpc_path = os.getenv("BPC_EXTENSION_PATH", "").strip() or None
+
+        # 逐篇分析配置
+        per_article_max_concurrent = int(os.getenv("PER_ARTICLE_MAX_CONCURRENT", "5"))
+        per_article_max_retries = int(os.getenv("PER_ARTICLE_MAX_RETRIES", "2"))
+        per_article_keep_days = int(os.getenv("PER_ARTICLE_KEEP_DAYS", "7"))
+        per_article_enable_auto_clean = os.getenv("PER_ARTICLE_ENABLE_AUTO_CLEAN", "true").lower() == "true"
+
         return cls(
             llm_provider=os.getenv("LLM_PROVIDER", "openai"),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
@@ -54,7 +91,18 @@ class Config:
             http_proxy=http_proxy,
             https_proxy=https_proxy,
             schedule_cron=os.getenv("SCHEDULE_CRON", "0 8 * * *"),
+            timezone=os.getenv("TIMEZONE", "Asia/Shanghai"),
             output_dir=Path(os.getenv("OUTPUT_DIR", "./output")),
+            email_sender=email_sender,
+            email_password=email_password,
+            email_recipient=email_recipient,
+            telegram_bot_token=telegram_bot_token,
+            telegram_chat_id=telegram_chat_id,
+            bpc_extension_path=bpc_path,
+            per_article_max_concurrent=per_article_max_concurrent,
+            per_article_max_retries=per_article_max_retries,
+            per_article_keep_days=per_article_keep_days,
+            per_article_enable_auto_clean=per_article_enable_auto_clean,
         )
 
     def get_proxy_dict(self) -> Optional[dict]:

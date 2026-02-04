@@ -13,7 +13,7 @@ from src.news_aggregator import (
     NewsScheduler,
     NEWS_SOURCES,
 )
-from src.news_aggregator.scheduler import run_aggregation
+from src.news_aggregator.scheduler import run_aggregation, run_daily_report
 
 
 def setup_logging(verbose: bool = False):
@@ -65,6 +65,8 @@ def main():
   python main.py --once --no-llm     # 运行一次（不使用 LLM）
   python main.py --daemon            # 以守护进程运行
   python main.py --list-sources      # 列出所有新闻源
+  python main.py --daily-report      # 生成每日报告
+  python main.py --daily-report --telegram  # 生成每日报告并发送到Telegram
         """,
     )
 
@@ -72,6 +74,21 @@ def main():
         "--once",
         action="store_true",
         help="运行一次后退出",
+    )
+    parser.add_argument(
+        "--per-article",
+        action="store_true",
+        help="启用逐篇分析模式（每篇单独调用 API）",
+    )
+    parser.add_argument(
+        "--daily-report",
+        action="store_true",
+        help="生成每日报告并发送邮件",
+    )
+    parser.add_argument(
+        "--telegram",
+        action="store_true",
+        help="同时发送报告到Telegram",
     )
     parser.add_argument(
         "--daemon",
@@ -150,17 +167,63 @@ def main():
             return 1
 
     # 运行模式
-    if args.once:
+    if args.daily_report:
+        # 每日报告（含邮件和可选Telegram）
+        logger.info("开始生成每日报告...")
+
+        # 检查邮件配置
+        if not config.email_sender or not config.email_password:
+            logger.error("请配置 EMAIL_SENDER 和 EMAIL_PASSWORD")
+            return 1
+
+        # 检查Telegram配置（如果启用）
+        if args.telegram:
+            if not config.telegram_bot_token or not config.telegram_chat_id:
+                logger.error("请配置 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID")
+                return 1
+            logger.info("Telegram发送已启用")
+
+        success = asyncio.run(run_daily_report(
+            config,
+            send_telegram=args.telegram
+        ))
+        if success:
+            print("\n✅ 每日报告已生成并发送")
+            if args.telegram:
+                print("📱 报告已通过Telegram发送")
+        else:
+            print("\n⚠️ 报告生成完成，但可能有部分内容被审查")
+        return 0
+
+    elif args.once:
         # 单次运行
         logger.info("开始单次运行...")
-        filepath = asyncio.run(
-            run_aggregation(
+
+        # 检查是否启用逐篇分析
+        if args.per_article:
+            # 逐篇分析模式
+            from src.news_aggregator.daily_report import run_daily_report
+            success = asyncio.run(run_daily_report(
                 config,
-                use_llm=not args.no_llm,
+                per_article_mode=True,
+                send_telegram=args.telegram
+            ))
+            if success:
+                print("\n✅ 逐篇分析已完成")
+                if args.telegram:
+                    print("📱 统计信息已通过Telegram发送")
+            else:
+                print("\n⚠️ 逐篇分析完成，但可能有部分内容被审查")
+        else:
+            # 传统批量模式
+            filepath = asyncio.run(
+                run_aggregation(
+                    config,
+                    use_llm=not args.no_llm,
+                )
             )
-        )
-        if filepath:
-            print(f"\n✅ 摘要已生成: {filepath}")
+            if filepath:
+                print(f"\n✅ 摘要已生成: {filepath}")
         return 0
 
     elif args.daemon:

@@ -11,3 +11,7 @@ fake-useragent>=1.4.0
 # 可选：用于绕过顽固付费墙（Bloomberg, FT, Washington Post）
 # 安装后需运行: playwright install chromium
 playwright>=1.40.0
+
+# Telegram 机器人
+python-telegram-bot>=22.6
+
