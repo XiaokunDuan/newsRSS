@@ -13,7 +13,6 @@ from src.news_aggregator import (
     NewsScheduler,
     NEWS_SOURCES,
 )
-from src.news_aggregator.scheduler import run_aggregation, run_daily_report
 
 
 def setup_logging(verbose: bool = False):
@@ -57,33 +56,21 @@ def list_sources():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="新闻聚合与摘要系统",
+        description="新闻聚合与摘要系统（逐篇分析模式）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python main.py --once              # 运行一次
-  python main.py --once --no-llm     # 运行一次（不使用 LLM）
+  python main.py --daily-report      # 生成每日报告（逐篇分析）
+  python main.py --daily-report --telegram  # 生成每日报告并发送到Telegram
   python main.py --daemon            # 以守护进程运行
   python main.py --list-sources      # 列出所有新闻源
-  python main.py --daily-report      # 生成每日报告
-  python main.py --daily-report --telegram  # 生成每日报告并发送到Telegram
         """,
     )
 
     parser.add_argument(
-        "--once",
-        action="store_true",
-        help="运行一次后退出",
-    )
-    parser.add_argument(
-        "--per-article",
-        action="store_true",
-        help="启用逐篇分析模式（每篇单独调用 API）",
-    )
-    parser.add_argument(
         "--daily-report",
         action="store_true",
-        help="生成每日报告并发送邮件",
+        help="生成每日报告（逐篇分析模式）",
     )
     parser.add_argument(
         "--telegram",
@@ -94,22 +81,6 @@ def main():
         "--daemon",
         action="store_true",
         help="以守护进程模式运行定时任务",
-    )
-    parser.add_argument(
-        "--no-llm",
-        action="store_true",
-        help="不使用 LLM 分析（仅聚合）",
-    )
-    parser.add_argument(
-        "--no-paywall",
-        action="store_true",
-        help="不尝试绕过付费墙",
-    )
-    parser.add_argument(
-        "--max-news",
-        type=int,
-        default=100,
-        help="最大分析新闻数量（默认 100）",
     )
     parser.add_argument(
         "--cron",
@@ -158,23 +129,17 @@ def main():
         config.output_dir = Path(args.output)
 
     # 验证配置
-    if not args.no_llm:
-        errors = config.validate()
-        if errors:
-            for error in errors:
-                logger.error(error)
-            logger.error("请检查 .env 配置文件")
-            return 1
+    errors = config.validate()
+    if errors:
+        for error in errors:
+            logger.error(error)
+        logger.error("请检查 .env 配置文件")
+        return 1
 
     # 运行模式
     if args.daily_report:
-        # 每日报告（含邮件和可选Telegram）
-        logger.info("开始生成每日报告...")
-
-        # 检查邮件配置
-        if not config.email_sender or not config.email_password:
-            logger.error("请配置 EMAIL_SENDER 和 EMAIL_PASSWORD")
-            return 1
+        # 每日报告（逐篇分析模式）
+        logger.info("开始生成每日报告（逐篇分析模式）...")
 
         # 检查Telegram配置（如果启用）
         if args.telegram:
@@ -183,47 +148,17 @@ def main():
                 return 1
             logger.info("Telegram发送已启用")
 
+        from src.news_aggregator.daily_report import run_daily_report
         success = asyncio.run(run_daily_report(
             config,
             send_telegram=args.telegram
         ))
         if success:
-            print("\n✅ 每日报告已生成并发送")
+            print("\n✅ 每日报告已生成")
             if args.telegram:
                 print("📱 报告已通过Telegram发送")
         else:
             print("\n⚠️ 报告生成完成，但可能有部分内容被审查")
-        return 0
-
-    elif args.once:
-        # 单次运行
-        logger.info("开始单次运行...")
-
-        # 检查是否启用逐篇分析
-        if args.per_article:
-            # 逐篇分析模式
-            from src.news_aggregator.daily_report import run_daily_report
-            success = asyncio.run(run_daily_report(
-                config,
-                per_article_mode=True,
-                send_telegram=args.telegram
-            ))
-            if success:
-                print("\n✅ 逐篇分析已完成")
-                if args.telegram:
-                    print("📱 统计信息已通过Telegram发送")
-            else:
-                print("\n⚠️ 逐篇分析完成，但可能有部分内容被审查")
-        else:
-            # 传统批量模式
-            filepath = asyncio.run(
-                run_aggregation(
-                    config,
-                    use_llm=not args.no_llm,
-                )
-            )
-            if filepath:
-                print(f"\n✅ 摘要已生成: {filepath}")
         return 0
 
     elif args.daemon:
@@ -248,11 +183,16 @@ def main():
         if next_run:
             logger.info(f"下次运行时间: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
 
+        # 创建并启动事件循环
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         # 保持运行
         try:
-            asyncio.get_event_loop().run_forever()
+            loop.run_forever()
         except (KeyboardInterrupt, SystemExit):
             scheduler.stop()
+            loop.stop()
 
         return 0
 

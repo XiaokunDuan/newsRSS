@@ -9,6 +9,7 @@ from typing import Optional
 
 import aiohttp
 import feedparser
+from pathlib import Path
 
 from .sources import NewsSource, NEWS_SOURCES, Category
 from .bypass import PaywallBypass
@@ -119,7 +120,13 @@ class NewsFetcher:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
 
-            connector = aiohttp.TCPConnector(ssl=False)
+            # 创建更宽松的 SSL 配置
+            import ssl
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
             async with aiohttp.ClientSession(
                 connector=connector, timeout=self.timeout
             ) as session:
@@ -133,7 +140,22 @@ class NewsFetcher:
                             error=f"HTTP {response.status}",
                         )
 
-                    content = await response.text()
+                    # 尝试自动检测编码，处理非 UTF-8 的 RSS
+                    raw = await response.read()
+                    # 尝试从响应头获取编码
+                    encoding = response.charset or 'utf-8'
+                    try:
+                        content = raw.decode(encoding)
+                    except UnicodeDecodeError:
+                        # 尝试常见编码
+                        for enc in ['gb2312', 'gbk', 'gb18030', 'latin-1']:
+                            try:
+                                content = raw.decode(enc)
+                                break
+                            except UnicodeDecodeError:
+                                continue
+                        else:
+                            content = raw.decode('utf-8', errors='ignore')
 
             # 解析 RSS
             feed = feedparser.parse(content)
@@ -172,6 +194,12 @@ class NewsFetcher:
         max_concurrent: Optional[int] = None,
     ) -> list[NewsItem]:
         """获取所有源的新闻"""
+        from .jsonl_writer import JSONLWriter
+
+        # 创建JSONL写入器
+        jsonl_writer = JSONLWriter(Path("output"), incremental_mode=True)
+        jsonl_writer.open()
+
         if sources is None:
             sources = NEWS_SOURCES
 
@@ -213,34 +241,66 @@ class NewsFetcher:
                     if item.id not in self._seen_ids:
                         self._seen_ids.add(item.id)
                         all_items.append(item)
+
+                        # 立即写入JSONL基础信息
+                        published_str = item.published.isoformat() if item.published else None
+                        jsonl_writer.write_article_base_info(
+                            article_id=item.id,
+                            title=item.title,
+                            source_name=item.source_name,
+                            published=published_str
+                        )
             else:
                 logger.warning(f"获取 {result.source.name} 失败: {result.error}")
 
         # 按时间排序（最新的在前）
         all_items.sort(key=lambda x: x.published or datetime.min, reverse=True)
 
+        # 关闭JSONL写入器
+        jsonl_writer.close()
+
         logger.info(f"总共获取 {len(all_items)} 条新闻")
         return all_items
 
     async def fetch_full_content(
-        self, items: list[NewsItem], max_items: int = 50
+        self, items: list[NewsItem], max_items: Optional[int] = None
     ) -> list[NewsItem]:
         """获取有付费墙的新闻全文"""
-        paywall_items = [item for item in items if item.has_paywall][:max_items]
+        paywall_items = [item for item in items if item.has_paywall]
+        if max_items:
+            paywall_items = paywall_items[:max_items]
+
+        # 创建JSONL写入器
+        from .jsonl_writer import JSONLWriter
+        jsonl_writer = JSONLWriter(Path("output"), incremental_mode=True)
+        jsonl_writer.open()
 
         if not paywall_items:
             return items
 
-        logger.info(f"尝试获取 {len(paywall_items)} 篇付费文章全文")
+        logger.info(f"尝试获取 {len(paywall_items)} 篇付费文章全文" + (f" (限制: {max_items})" if max_items else ""))
 
         urls = [item.link for item in paywall_items]
-        results = await self.bypass.batch_get_articles(urls, max_concurrent=5)
+        # 增加并发数到15，提高顽固付费墙网站处理速度
+        results = await self.bypass.batch_get_articles(urls, max_concurrent=15)
 
         # 更新新闻条目
         url_to_item = {item.link: item for item in paywall_items}
+        success_count = 0
         for url, bypass_result in results.items():
             if bypass_result.success and url in url_to_item:
-                url_to_item[url].full_content = bypass_result.content
-                logger.info(f"成功获取全文: {url_to_item[url].title[:30]}...")
+                item = url_to_item[url]
+                item.full_content = bypass_result.content
+                success_count += 1
 
+                # 更新JSONL中的全文内容
+                jsonl_writer.update_full_content(item.id, bypass_result.content)
+
+                if success_count % 10 == 0:
+                    logger.info(f"已获取全文: {success_count}/{len(paywall_items)}")
+
+        # 关闭JSONL写入器
+        jsonl_writer.close()
+
+        logger.info(f"付费墙处理完成: 成功 {success_count}/{len(paywall_items)}")
         return items

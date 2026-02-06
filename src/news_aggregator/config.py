@@ -29,10 +29,6 @@ class Config:
     # 输出配置
     output_dir: Path = field(default_factory=lambda: Path("./output"))
 
-    # 邮件配置
-    email_sender: Optional[str] = None
-    email_password: Optional[str] = None
-    email_recipient: Optional[str] = None
 
     # Telegram 配置
     telegram_bot_token: Optional[str] = None
@@ -60,13 +56,9 @@ class Config:
         else:
             load_dotenv()
 
-        http_proxy = os.getenv("HTTP_PROXY", "").strip() or None
-        https_proxy = os.getenv("HTTPS_PROXY", "").strip() or None
+        http_proxy = None
+        https_proxy = None
 
-        # 邮件配置
-        email_sender = os.getenv("EMAIL_SENDER", "").strip() or None
-        email_password = os.getenv("EMAIL_PASSWORD", "").strip() or None
-        email_recipient = os.getenv("EMAIL_RECIPIENT", "").strip() or None
 
         # Telegram 配置
         telegram_bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or None
@@ -93,9 +85,6 @@ class Config:
             schedule_cron=os.getenv("SCHEDULE_CRON", "0 8 * * *"),
             timezone=os.getenv("TIMEZONE", "Asia/Shanghai"),
             output_dir=Path(os.getenv("OUTPUT_DIR", "./output")),
-            email_sender=email_sender,
-            email_password=email_password,
-            email_recipient=email_recipient,
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
             bpc_extension_path=bpc_path,

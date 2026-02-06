@@ -40,6 +40,13 @@ BROWSER_BYPASS_SITES = [
     "washingtonpost.com",
     "economist.com",
     "telegraph.co.uk",
+    "zaobao.com.sg",  # 联合早报需要浏览器绕过
+    "wsj.com",  # Wall Street Journal
+    "nytimes.com",  # New York Times
+    "scmp.com",  # 南华早报
+    "asia.nikkei.com",  # 日经亚洲
+    "technologyreview.com",  # MIT Technology Review
+    "foreignaffairs.com",  # Foreign Affairs
 ]
 
 
@@ -87,25 +94,35 @@ class BrowserBypass:
         args = [
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
+            "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
         ]
 
-        # 如果有扩展路径，加载扩展
-        if self.extension_path and Path(self.extension_path).exists():
+        # 如果有扩展路径，加载扩展（扩展需要非无头模式）
+        use_extension = self.extension_path and Path(self.extension_path).exists()
+        if use_extension:
             args.extend([
                 f"--disable-extensions-except={self.extension_path}",
                 f"--load-extension={self.extension_path}",
             ])
+            # 扩展需要非无头模式
+            actual_headless = False
+        else:
+            actual_headless = self.headless
 
         self._context = await self._playwright.chromium.launch_persistent_context(
             user_data_dir="/tmp/newsrss_playwright_profile",
-            headless=self.headless,
+            headless=actual_headless,
             args=args,
             viewport={"width": 1280, "height": 900},
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+            ignore_https_errors=True,
         )
 
         # 等待扩展加载
-        if self.extension_path:
-            await asyncio.sleep(2)
+        if use_extension:
+            await asyncio.sleep(3)
 
     async def close(self):
         """关闭浏览器"""

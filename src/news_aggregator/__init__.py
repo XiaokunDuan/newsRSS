@@ -8,6 +8,8 @@ from .bypass_browser import BrowserBypass
 from .analyzer import NewsAnalyzer
 from .summarizer import NewsSummarizer
 from .scheduler import NewsScheduler
+from .jsonl_writer import JSONLWriter
+from .data_classes import ArticleResult, DailyAnalysisSummary
 
 __version__ = "1.0.0"
 __all__ = [
@@ -20,4 +22,7 @@ __all__ = [
     "NewsAnalyzer",
     "NewsSummarizer",
     "NewsScheduler",
+    "JSONLWriter",
+    "ArticleResult",
+    "DailyAnalysisSummary",
 ]

@@ -194,77 +194,91 @@ class NewsAnalyzer:
 
         return analyzed
 
-    def analyze_news(
-        self, items: list[NewsItem], max_items: int = 100
+    async def analyze_news(
+        self, items: list[NewsItem], max_items: int = 100, max_concurrent: int = 10
     ) -> Analysis:
-        """分析新闻列表"""
+        """分析新闻列表 - 异步并发分析"""
+        import asyncio
+        from typing import List
+
         # 限制数量
         items = items[:max_items]
 
-        # 第一步：批量分类
-        logger.info(f"开始分类 {len(items)} 条新闻...")
-        categorized = self.categorize_news(items)
+        logger.info(f"开始并发分析 {len(items)} 条新闻，并发数: {max_concurrent}...")
+
+        # 异步分析单个文章
+        async def analyze_single_async(item: NewsItem) -> AnalyzedNews:
+            analyzed = self.analyze_single(item)  # 每条新闻都深度分析
+
+            # 更新JSONL中的摘要
+            try:
+                from .jsonl_writer import JSONLWriter
+                from pathlib import Path
+                jsonl_writer = JSONLWriter(Path("output"), incremental_mode=True)
+                jsonl_writer.open()
+                jsonl_writer.update_summary(item.id, analyzed.chinese_summary)
+                jsonl_writer.close()
+            except Exception as e:
+                logger.warning(f"更新JSONL摘要失败 {item.id}: {e}")
+
+            # 从单条分析结果中提取重要性评分
+            # 基于摘要长度和内容质量估算重要性
+            importance = 5  # 默认中等重要性
+            summary_length = len(analyzed.chinese_summary) if analyzed.chinese_summary else 0
+            key_points_count = len(analyzed.key_points) if analyzed.key_points else 0
+
+            # 重要性评分逻辑
+            if summary_length > 150 and key_points_count >= 3:
+                importance = 8  # 高质量新闻
+            elif summary_length > 100 and key_points_count >= 2:
+                importance = 6  # 中等质量
+            elif summary_length > 50:
+                importance = 4  # 一般新闻
+            else:
+                importance = 2  # 简短新闻
+
+            analyzed.importance = importance
+            return analyzed
+
+        # 并发分析所有新闻
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def analyze_with_semaphore(item: NewsItem, index: int) -> AnalyzedNews:
+            async with semaphore:
+                result = await analyze_single_async(item)
+                if (index + 1) % 10 == 0:
+                    logger.info(f"分析进度: {index + 1}/{len(items)}")
+                return result
+
+        # 创建并发任务
+        tasks = [
+            analyze_with_semaphore(item, i)
+            for i, item in enumerate(items)
+        ]
+
+        # 并发执行
+        all_analyzed: List[AnalyzedNews] = await asyncio.gather(*tasks)
 
         # 构建分析结果
         analysis = Analysis(total_count=len(items))
 
-        # 按类别组织
-        category_map = {
-            "国际政治": Category.POLITICS,
-            "经济财经": Category.ECONOMY,
-            "科技动态": Category.TECHNOLOGY,
-            "社会民生": Category.SOCIETY,
-            "中国相关": Category.CHINA,
-            "观点评论": Category.OPINION,
-            "其他": Category.OTHER,
-        }
-
-        for item in items:
-            cat_info = categorized.get(item.id, {})
-
-            analyzed = AnalyzedNews(
-                item=item,
-                key_points=cat_info.get("key_points", []),
-                importance=cat_info.get("importance", 5),
-                chinese_summary=cat_info.get("chinese_summary", item.summary[:100]),
-            )
-
-            # 确定类别
-            cat_name = cat_info.get("category", item.category.value)
-            category = category_map.get(cat_name, item.category)
-
+        # 按原始类别组织
+        for analyzed in all_analyzed:
+            category = analyzed.item.category
             if category not in analysis.news_by_category:
                 analysis.news_by_category[category] = []
             analysis.news_by_category[category].append(analyzed)
 
-        # 提取重要新闻（importance >= 8）
-        all_analyzed = []
-        for cat_items in analysis.news_by_category.values():
-            all_analyzed.extend(cat_items)
-
+        # 提取重要新闻（importance >= 7）
         analysis.top_stories = sorted(
-            [a for a in all_analyzed if a.importance >= 8],
+            [a for a in all_analyzed if a.importance >= 7],
             key=lambda x: x.importance,
             reverse=True,
-        )[:10]
+        )[:15]  # 增加到15条重要新闻
 
         logger.info(
             f"分析完成: {len(analysis.news_by_category)} 个类别, "
-            f"{len(analysis.top_stories)} 条重要新闻"
+            f"{len(analysis.top_stories)} 条重要新闻 (并发分析完成)"
         )
-
-        return analysis
-
-    def enhance_top_stories(self, analysis: Analysis) -> Analysis:
-        """增强重要新闻的分析"""
-        logger.info(f"增强分析 {len(analysis.top_stories)} 条重要新闻...")
-
-        for i, analyzed in enumerate(analysis.top_stories):
-            enhanced = self.analyze_single(analyzed.item)
-            # 更新分析结果
-            analyzed.chinese_summary = enhanced.chinese_summary
-            analyzed.key_points = enhanced.key_points
-            analyzed.sentiment = enhanced.sentiment
-            logger.info(f"增强进度: {i + 1}/{len(analysis.top_stories)}")
 
         return analysis

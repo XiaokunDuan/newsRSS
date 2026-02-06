@@ -37,6 +37,9 @@ class JSONLWriter:
         # 今日日期
         self.date_str = datetime.now().strftime("%Y-%m-%d")
 
+        # 增量更新索引（存储每个文章ID在文件中的位置）
+        self._article_positions: dict[str, int] = {}  # article_id -> 文件位置（字节偏移）
+
         # 文件路径
         self.articles_file = self.output_dir / f"articles-{self.date_str}.jsonl"
         self.censored_file = self.output_dir / f"censored-{self.date_str}.jsonl"
@@ -60,6 +63,7 @@ class JSONLWriter:
         if incremental_mode:
             self._load_progress()
             self._load_existing_hashes()
+            self._load_article_positions()
 
     def open(self) -> "JSONLWriter":
         """打开文件句柄（用于实时写入）"""
@@ -94,6 +98,26 @@ class JSONLWriter:
                 content_hash = self._generate_content_hash(article)
                 self._processed_hashes.add(content_hash)
             logger.info(f"加载 {len(self._processed_hashes)} 个已存在文章哈希")
+
+    def _load_article_positions(self):
+        """加载文章在文件中的位置索引"""
+        self._article_positions.clear()
+        try:
+            if self.articles_file.exists():
+                position = 0
+                with open(self.articles_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line.strip())
+                            article_id = data.get('id')
+                            if article_id:
+                                self._article_positions[article_id] = position
+                        except json.JSONDecodeError:
+                            pass
+                        position += len(line.encode('utf-8'))
+                logger.info(f"加载 {len(self._article_positions)} 个文章位置索引")
+        except Exception as e:
+            logger.warning(f"加载文章位置索引失败: {e}")
 
     def _generate_content_hash(self, data: dict) -> str:
         """生成内容哈希，用于去重"""
@@ -578,3 +602,248 @@ class JSONLWriter:
                 stats[f'{file_name}_size'] = 0
 
         return stats
+
+    def write_article_base_info(self, article_id: str, title: str, source_name: str, published: Optional[str] = None) -> bool:
+        """写入文章基础信息（RSS抓取阶段调用）
+
+        Args:
+            article_id: 文章ID
+            title: 文章标题
+            source_name: 新闻源名称
+            published: 发布时间（可选）
+
+        Returns:
+            是否成功写入
+        """
+        if not self._articles_fh:
+            self.open()
+
+        try:
+            # 构建基础数据
+            data = {
+                "id": article_id,
+                "title": title,
+                "source_name": source_name,
+                "published": published,
+                "summary": None,           # 初始为None，LLM分析阶段填充
+                "full_content": None,      # 初始为None，付费墙绕过阶段填充
+                "censored": False          # 初始为未审查
+            }
+
+            # 去重检查
+            if self.deduplicate:
+                content_hash = self._generate_content_hash(data)
+                if content_hash in self._processed_hashes:
+                    logger.debug(f"文章 {article_id} 内容重复，跳过")
+                    return True  # 重复内容，视为成功
+
+            operation_id = f"base_info_{article_id}"
+            success = self._write_line(self._articles_fh, data, operation_id)
+
+            if success:
+                # 获取文件大小作为位置（因为文件是以追加模式打开的）
+                file_size = self.articles_file.stat().st_size
+                line_json = json.dumps(data, ensure_ascii=False)
+                line_length = len(line_json.encode('utf-8')) + 1  # +1 for newline
+                position = file_size - line_length
+                self._article_positions[article_id] = position
+
+                if self.incremental_mode:
+                    self._processed_ids.add(article_id)
+
+                if self.deduplicate:
+                    content_hash = self._generate_content_hash(data)
+                    self._processed_hashes.add(content_hash)
+
+                logger.debug(f"成功写入文章基础信息 {article_id}，位置: {position}")
+            else:
+                logger.warning(f"写入文章基础信息 {article_id} 失败")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"写入文章基础信息失败 {article_id}: {e}")
+            return False
+
+    def _get_current_file_position(self) -> Optional[int]:
+        """获取当前文件指针位置"""
+        try:
+            if self._articles_fh:
+                return self._articles_fh.tell()
+        except Exception as e:
+            logger.warning(f"获取文件位置失败: {e}")
+        return None
+
+    def update_article_field(self, article_id: str, field_name: str, field_value: any) -> bool:
+        """增量更新文章特定字段
+
+        Args:
+            article_id: 文章ID
+            field_name: 字段名 (如 'summary', 'full_content')
+            field_value: 字段值
+
+        Returns:
+            是否成功更新
+        """
+        try:
+            # 1. 检查文章是否存在
+            if article_id not in self._article_positions:
+                logger.warning(f"文章 {article_id} 不存在于位置索引中，跳过更新")
+                return False
+
+            position = self._article_positions[article_id]
+
+            # 2. 读取现有数据
+            with open(self.articles_file, 'r+', encoding='utf-8') as f:
+                f.seek(position)
+                line = f.readline()
+                if not line:
+                    logger.warning(f"在位置 {position} 读取数据失败")
+                    return False
+
+                try:
+                    data = json.loads(line.strip())
+                except json.JSONDecodeError as e:
+                    logger.error(f"解析文章数据失败 {article_id}: {e}")
+                    return False
+
+                # 3. 更新字段
+                data[field_name] = field_value
+
+                # 4. 写回数据（原地更新）
+                f.seek(position)
+                updated_line = json.dumps(data, ensure_ascii=False) + '\n'
+                f.write(updated_line)
+
+                # 5. 如果新行长度不同，需要截断后面的内容
+                old_line_length = len(line.encode('utf-8'))
+                new_line_length = len(updated_line.encode('utf-8'))
+
+                if new_line_length < old_line_length:
+                    # 截断多余部分
+                    f.truncate()
+
+                logger.debug(f"成功更新文章 {article_id} 字段 {field_name}")
+                return True
+
+        except Exception as e:
+            logger.error(f"更新文章字段失败 {article_id}.{field_name}: {e}")
+            return False
+
+    def update_full_content(self, article_id: str, full_content: str) -> bool:
+        """更新文章全文内容（付费墙绕过阶段调用）
+
+        Args:
+            article_id: 文章ID
+            full_content: 全文内容
+
+        Returns:
+            是否成功更新
+        """
+        return self.update_article_field(article_id, "full_content", full_content)
+
+    def update_summary(self, article_id: str, summary: str) -> bool:
+        """更新文章摘要（LLM分析阶段调用）
+
+        Args:
+            article_id: 文章ID
+            summary: 中文摘要
+
+        Returns:
+            是否成功更新
+        """
+        return self.update_article_field(article_id, "summary", summary)
+
+    def update_censored_status(self, article_id: str, censored: bool,
+                               reason: Optional[str] = None) -> bool:
+        """更新文章审查状态
+
+        Args:
+            article_id: 文章ID
+            censored: 是否被审查
+            reason: 审查原因（可选）
+
+        Returns:
+            是否成功更新
+        """
+        try:
+            # 同时更新censored字段和可能的reason
+            if censored:
+                data_updates = {"censored": True}
+                if reason:
+                    data_updates["censored_reason"] = reason
+            else:
+                data_updates = {"censored": False}
+
+            # 逐个更新字段
+            for field_name, field_value in data_updates.items():
+                if not self.update_article_field(article_id, field_name, field_value):
+                    return False
+
+            # 如果被审查，移动到审查文件
+            if censored:
+                return self._move_to_censored_file(article_id)
+
+            return True
+
+        except Exception as e:
+            logger.error(f"更新审查状态失败 {article_id}: {e}")
+            return False
+
+    def _move_to_censored_file(self, article_id: str) -> bool:
+        """将文章移动到审查文件
+
+        Args:
+            article_id: 文章ID
+
+        Returns:
+            是否成功移动
+        """
+        try:
+            if article_id not in self._article_positions:
+                return False
+
+            position = self._article_positions[article_id]
+
+            # 1. 读取文章数据
+            with open(self.articles_file, 'r', encoding='utf-8') as f:
+                f.seek(position)
+                line = f.readline()
+                if not line:
+                    return False
+
+                try:
+                    data = json.loads(line.strip())
+                except json.JSONDecodeError:
+                    return False
+
+            # 2. 写入审查文件
+            if not self._censored_fh:
+                self._censored_fh = open(self.censored_file, 'a', encoding='utf-8')
+
+            operation_id = f"move_censored_{article_id}"
+            success = self._write_line(self._censored_fh, data, operation_id)
+
+            if success:
+                # 3. 从原文件删除（标记为删除状态）
+                self._mark_as_deleted(article_id, position)
+                logger.debug(f"文章 {article_id} 已移动到审查文件")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"移动文章到审查文件失败 {article_id}: {e}")
+            return False
+
+    def _mark_as_deleted(self, article_id: str, position: int):
+        """标记文章为已删除（在位置索引中移除）
+
+        Args:
+            article_id: 文章ID
+            position: 文件位置
+        """
+        if article_id in self._article_positions:
+            del self._article_positions[article_id]
+
+        if self.incremental_mode and article_id in self._processed_ids:
+            self._processed_ids.remove(article_id)

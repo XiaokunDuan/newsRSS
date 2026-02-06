@@ -40,21 +40,17 @@ class ArticleResult:
             "source_name": self.source_name,
             "summary": self.summary,
             "censored": self.censored,
-            "censored_reason": self.censored_reason,
-            "importance": self.importance,
-            "category": self.category,
-            "key_points": self.key_points,
-            "sentiment": self.sentiment,
-            "analysis_time": self.analysis_time,
         }
-        # 如果包含原始项目，添加简化版本
-        if self.original_item:
-            data["original_item"] = {
-                "link": self.original_item.link,
-                "published": self.original_item.published.isoformat()
-                    if self.original_item.published else None,
-                "language": self.original_item.language,
-            }
+        # 添加发布时间（直接从original_item提取）
+        if self.original_item and self.original_item.published:
+            data["published"] = self.original_item.published.isoformat()
+        else:
+            data["published"] = None
+
+        # 如果需要，保留审查原因
+        if self.censored and self.censored_reason:
+            data["censored_reason"] = self.censored_reason
+
         return data
 
     def to_json(self) -> str:

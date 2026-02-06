@@ -25,17 +25,7 @@ class PerArticleAnalyzer:
 
     # DeepSeek 审查拒绝的关键词
     CENSORSHIP_INDICATORS = [
-        "无法回答",
-        "不能提供",
-        "问一些其它的问题",
-        "还没学习",
-        "政策",
         "作为一个人工智能语言模型，我还没学习如何回答这个问题，您可以向我问一些其它的问题，我会尽力帮您解决的。",
-        "I cannot",
-        "I can't",
-        "unable to",
-        "not able to",
-        "against policy",
     ]
 
     def __init__(self, config: Config, analysis_config: Optional[AnalysisConfig] = None):

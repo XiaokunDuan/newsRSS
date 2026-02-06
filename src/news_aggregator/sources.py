@@ -45,7 +45,7 @@ class NewsSource:
 US_SOURCES = [
     NewsSource(
         name="CNN",
-        url="https://rss.cnn.com/rss/edition.rss",
+        url="http://rss.cnn.com/rss/edition.rss",  # 使用 HTTP 避免 SSL 问题
         region=Region.US,
         category=Category.OTHER,
         description="CNN 国际版",
@@ -66,7 +66,7 @@ US_SOURCES = [
     ),
     NewsSource(
         name="AP News",
-        url="https://rsshub.app/apnews/topics/apf-topnews",
+        url="https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en",  # Google News AP
         region=Region.US,
         category=Category.OTHER,
     ),
@@ -96,13 +96,7 @@ US_SOURCES = [
         region=Region.US,
         category=Category.POLITICS,
     ),
-    NewsSource(
-        name="The Atlantic",
-        url="https://www.theatlantic.com/feed/all/",
-        region=Region.US,
-        category=Category.OPINION,
-        has_paywall=True,
-    ),
+    # 已删除：The Atlantic - 过于知识分子化，实用性不强
 ]
 
 # 英国媒体
@@ -115,13 +109,13 @@ UK_SOURCES = [
     ),
     NewsSource(
         name="The Guardian World",
-        url="https://www.theguardian.com/world/rss",
+        url="http://www.theguardian.com/world/rss",  # HTTP 避免 SSL 问题
         region=Region.UK,
         category=Category.OTHER,
     ),
     NewsSource(
         name="Financial Times",
-        url="https://www.ft.com/rss/home",
+        url="https://www.ft.com/news-feed?format=rss",  # FT 官方 RSS Feed
         region=Region.UK,
         category=Category.ECONOMY,
         has_paywall=True,
@@ -185,13 +179,14 @@ ASIA_SOURCES = [
         category=Category.CHINA,
         has_paywall=True,
     ),
-    NewsSource(
-        name="联合早报",
-        url="https://rsshub.app/zaobao/realtime/china",
-        region=Region.ASIA,
-        category=Category.CHINA,
-        language="zh",
-    ),
+    # 联合早报 - RSS 已失效，暂时移除
+    # NewsSource(
+    #     name="联合早报",
+    #     url="...",
+    #     region=Region.ASIA,
+    #     category=Category.CHINA,
+    #     language="zh",
+    # ),
     NewsSource(
         name="ABC Australia",
         url="https://www.abc.net.au/news/feed/1948/rss.xml",
@@ -206,60 +201,18 @@ ASIA_SOURCES = [
     ),
 ]
 
-# 中文独立媒体 (被墙)
-CHINA_SOURCES = [
-    NewsSource(
-        name="RFI 法广中文",
-        url="https://www.rfi.fr/cn/rss",
-        region=Region.CHINA,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-    ),
-    NewsSource(
-        name="VOA 美国之音",
-        url="https://www.voachinese.com/api/zrqiteuuqu",
-        region=Region.CHINA,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-    ),
-    NewsSource(
-        name="RFA 自由亚洲",
-        url="https://www.rfa.org/mandarin/RSS",
-        region=Region.CHINA,
-        category=Category.CHINA,
-        language="zh",
-        requires_proxy=True,
-    ),
-]
+# 中文独立媒体 (被墙) - 已删除：政治倾向太明显，不适合趋吉避害
+# CHINA_SOURCES = []
+CHINA_SOURCES = []
 
-# 科技媒体
+# 科技媒体 (精简，只保留最重要的)
 TECH_SOURCES = [
-    NewsSource(
-        name="TechCrunch",
-        url="https://techcrunch.com/feed/",
-        region=Region.US,
-        category=Category.TECHNOLOGY,
-    ),
-    NewsSource(
-        name="Wired",
-        url="https://www.wired.com/feed/rss",
-        region=Region.US,
-        category=Category.TECHNOLOGY,
-        has_paywall=True,
-    ),
-    NewsSource(
-        name="Ars Technica",
-        url="https://feeds.arstechnica.com/arstechnica/index",
-        region=Region.US,
-        category=Category.TECHNOLOGY,
-    ),
     NewsSource(
         name="The Verge",
         url="https://www.theverge.com/rss/index.xml",
         region=Region.US,
         category=Category.TECHNOLOGY,
+        description="消费科技视角，关注科技对社会的影响",
     ),
     NewsSource(
         name="MIT Technology Review",
@@ -267,6 +220,54 @@ TECH_SOURCES = [
         region=Region.US,
         category=Category.TECHNOLOGY,
         has_paywall=True,
+        description="前沿科技研究，关注技术突破趋势",
+    ),
+]
+
+# 新增媒体 (平衡视角，趋吉避害)
+ADDITIONAL_SOURCES = [
+    # 右派平衡媒体
+    NewsSource(
+        name="Fox News",
+        url="http://feeds.foxnews.com/foxnews/latest",  # HTTP 避免 SSL 问题
+        region=Region.US,
+        category=Category.POLITICS,
+        description="美国最大保守派媒体，提供右派视角平衡",
+    ),
+    # 经济深度分析
+    NewsSource(
+        name="The Economist",
+        url="http://www.economist.com/the-world-this-week/rss.xml",  # HTTP 避免 SSL 问题
+        region=Region.UK,
+        category=Category.ECONOMY,
+        has_paywall=True,
+        description="全球经济政治深度分析，权威经济杂志",
+    ),
+    # 国际关系权威
+    NewsSource(
+        name="Foreign Affairs",
+        url="https://www.foreignaffairs.com/rss.xml",  # 正确的 RSS 地址
+        region=Region.US,
+        category=Category.POLITICS,
+        has_paywall=True,
+        description="国际关系权威期刊，外交政策深度分析",
+    ),
+    # 财新网 - 无可用公开 RSS，已移除
+    # NewsSource(
+    #     name="财新网",
+    #     url="...",
+    #     region=Region.CHINA,
+    #     category=Category.ECONOMY,
+    #     language="zh",
+    #     description="中国财经政策权威报道，关注经济改革",
+    # ),
+    # 中国官方视角
+    NewsSource(
+        name="CCTV News",
+        url="https://www.cgtn.com/subscribe/rss/section/world.xml",  # CGTN RSS (CCTV 国际频道)
+        region=Region.CHINA,
+        category=Category.CHINA,
+        description="中国官方英文新闻，了解政府立场和宣传重点",
     ),
 ]
 
@@ -298,9 +299,10 @@ NEWS_SOURCES: list[NewsSource] = (
     + UK_SOURCES
     + EU_SOURCES
     + ASIA_SOURCES
-    + CHINA_SOURCES
     + TECH_SOURCES
     + FINANCE_SOURCES
+    + ADDITIONAL_SOURCES
+    # 注：已删除 CHINA_SOURCES（政治倾向太明显）
 )
 
 

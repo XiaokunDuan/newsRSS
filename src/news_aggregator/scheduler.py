@@ -11,8 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from .config import Config
 from .fetcher import NewsFetcher
-from .analyzer import NewsAnalyzer
-from .summarizer import NewsSummarizer, QuickSummarizer
+from .summarizer import QuickSummarizer
 from .daily_report import DailyReportGenerator
 
 logger = logging.getLogger(__name__)
@@ -25,8 +24,6 @@ class NewsScheduler:
         self.config = config
         self.scheduler = AsyncIOScheduler()
         self.fetcher = NewsFetcher(config)
-        self.analyzer = NewsAnalyzer(config) if config.openai_api_key else None
-        self.summarizer = NewsSummarizer(config)
         self.quick_summarizer = QuickSummarizer(config)
         self._callback: Optional[Callable] = None
 
@@ -34,58 +31,31 @@ class NewsScheduler:
         """设置任务完成回调"""
         self._callback = callback
 
-    async def run_once(
-        self,
-        use_llm: bool = True,
-        fetch_full_content: bool = True,
-        max_news: int = 100,
-    ) -> str:
-        """执行一次新闻聚合"""
+    async def run_once(self) -> bool:
+        """执行一次新闻聚合（逐篇分析模式）"""
         start_time = datetime.now()
         logger.info(f"开始新闻聚合任务: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-        # 1. 获取新闻
-        logger.info("正在获取新闻源...")
-        items = await self.fetcher.fetch_all_sources()
-        logger.info(f"获取到 {len(items)} 条新闻")
+        try:
+            generator = DailyReportGenerator(self.config)
+            success = await generator.run()
 
-        if not items:
-            logger.warning("未获取到任何新闻")
-            return ""
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            logger.info(f"任务完成，耗时 {duration:.1f} 秒")
 
-        # 2. 获取付费文章全文（可选）
-        if fetch_full_content:
-            logger.info("正在获取付费文章全文...")
-            items = await self.fetcher.fetch_full_content(items, max_items=50)
+            # 触发回调
+            if self._callback:
+                try:
+                    self._callback(success)
+                except Exception as e:
+                    logger.error(f"回调执行失败: {e}")
 
-        # 3. 分析和生成摘要
-        if use_llm and self.analyzer:
-            logger.info("正在使用 LLM 分析新闻...")
-            analysis = self.analyzer.analyze_news(items, max_items=max_news)
+            return success
 
-            # 增强重要新闻分析
-            if analysis.top_stories:
-                analysis = self.analyzer.enhance_top_stories(analysis)
-
-            filepath = self.summarizer.generate_and_save(analysis)
-        else:
-            logger.info("生成快速摘要（未使用 LLM）...")
-            summary = self.quick_summarizer.generate_quick_summary(items)
-            filepath = self.quick_summarizer.save_markdown(summary)
-
-        end_time = datetime.now()
-        duration = (end_time - start_time).total_seconds()
-        logger.info(f"任务完成，耗时 {duration:.1f} 秒")
-        logger.info(f"摘要文件: {filepath}")
-
-        # 触发回调
-        if self._callback:
-            try:
-                self._callback(str(filepath))
-            except Exception as e:
-                logger.error(f"回调执行失败: {e}")
-
-        return str(filepath)
+        except Exception as e:
+            logger.error(f"任务执行失败: {e}")
+            return False
 
     async def _scheduled_task(self):
         """定时任务包装器"""
@@ -146,18 +116,11 @@ class NewsScheduler:
         return None
 
 
-async def run_aggregation(config: Config, use_llm: bool = True) -> str:
-    """独立运行一次聚合任务"""
-    scheduler = NewsScheduler(config)
-    return await scheduler.run_once(use_llm=use_llm)
-
-
-async def run_daily_report(config: Config) -> bool:
-    """运行每日报告（含邮件发送）"""
+async def run_daily_report(config: Config, send_telegram: bool = False) -> bool:
+    """运行每日报告"""
     generator = DailyReportGenerator(config)
     return await generator.run(
-        send_email=True,
-        email_sender=config.email_sender,
-        email_password=config.email_password,
-        email_recipient=config.email_recipient,
+        send_telegram=send_telegram,
+        telegram_bot_token=config.telegram_bot_token,
+        telegram_chat_id=config.telegram_chat_id,
     )

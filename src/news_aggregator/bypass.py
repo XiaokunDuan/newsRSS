@@ -140,10 +140,10 @@ SITE_RULES: dict[str, SiteRule] = {
         min_content_length=300,  # WSJ 返回的内容较短
     ),
     "bloomberg.com": SiteRule(
-        method="chrome",  # BPC 不用 googlebot，靠阻止 JS
-        fallbacks=("chrome_facebook", "archive"),
+        method="googlebot",  # Bloomberg 对 Googlebot 较友好
+        fallbacks=("chrome_google", "chrome_facebook", "bingbot", "archive"),
         try_json_ld=True,
-        min_content_length=300,
+        min_content_length=100,  # 进一步降低阈值
     ),
     "theatlantic.com": SiteRule(
         method="chrome",
@@ -162,6 +162,12 @@ SITE_RULES: dict[str, SiteRule] = {
         method="chrome",
         fallbacks=("archive",),
         try_json_ld=True,
+    ),
+    "economist.com": SiteRule(
+        method="googlebot",  # Economist 需要 bot UA
+        fallbacks=("chrome_google", "bingbot", "archive"),
+        try_json_ld=True,
+        min_content_length=200,
     ),
 
     # === 亚太媒体 ===
@@ -522,8 +528,9 @@ class PaywallBypass:
 
     def _needs_browser_fallback(self, url: str) -> bool:
         """检查是否需要浏览器备用方案"""
-        browser_sites = ["bloomberg.com", "ft.com", "washingtonpost.com", "economist.com"]
-        return any(site in url for site in browser_sites)
+        # 总是启用浏览器备用方案，提高顽固付费墙成功率
+        browser_sites = ["bloomberg.com", "ft.com", "washingtonpost.com", "economist.com", "zaobao.com.sg", "wsj.com", "nytimes.com", "scmp.com"]
+        return any(site in url for site in browser_sites)  # 现在会覆盖所有主要付费墙网站
 
     async def _try_browser_bypass(self, url: str) -> Optional[BypassResult]:
         """尝试使用浏览器绕过"""
